@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head><title>Test Search</title></head>
+<body>
+  <div data-component-type="s-search-result" data-asin="B080X4DRG8">
+    <h2><a class="a-link-normal s-underline-text" href="/dp/B080X4DRG8/ref=sr_1_1"><span class="a-text-normal">Test Product 1: Cool Gadget</span></a></h2>
+    <div class="a-price-section">
+      <span class="a-price"><span class="a-offscreen">₹1,999.00</span><span aria-hidden="true"><span class="a-price-symbol">₹</span><span class="a-price-whole">1,999</span></span></span>
+    </div>
+    <div class="s-image-square-aspect">
+      <img class="s-image" src="https://m.media-amazon.com/images/I/image1.jpg" />
+    </div>
+  </div>
+  <div data-component-type="s-search-result" data-asin="B09XYZ1234">
+    <h2><a class="a-link-normal s-underline-text" href="/dp/B09XYZ1234/ref=sr_1_2"><span class="a-text-normal">Test Product 2: Another Item (No Price)</span></a></h2>
+    <!-- Missing price element for testing robustness -->
+    <div class="s-image-square-aspect">
+      <img class="s-image" src="https://m.media-amazon.com/images/I/image2.jpg" />
+    </div>
+  </div>
+  <div data-component-type="s-search-result" data-asin="B0ABCDEFGH">
+    <h2><a class="a-link-normal s-underline-text" href="/dp/B0ABCDEFGH/ref=sr_1_3"><span class="a-text-normal">Test Product 3: Full Data</span></a></h2>
+    <div class="a-price-section">
+      <span class="a-price"><span class="a-offscreen">₹2,499.50</span><span aria-hidden="true"><span class="a-price-symbol">₹</span><span class="a-price-whole">2,499<span class="a-price-fraction">50</span></span></span></span>
+    </div>
+    <div class="s-image-square-aspect">
+      <img class="s-image" src="https://m.media-amazon.com/images/I/image3.jpg" />
+    </div>
+  </div>
+  <!-- A product item using the alternative structure for containers -->
+  <div class="s-result-item s-asin" data-asin="B0ALTCONT1">
+     <div class="s-widget-container">
+         <div class="s-card-container">
+             <div class="a-section">
+                 <h2 class="a-size-mini a-spacing-none a-color-base s-line-clamp-2">
+                     <a class="a-link-normal s-no-outline" href="/Alternative-Product-4-Link/dp/B0ALTCONT1/">
+                         <span class="a-size-medium a-color-base a-text-normal">Alternative Product 4: Test With Alt Structure</span>
+                     </a>
+                 </h2>
+             </div>
+             <div class="a-section">
+                 <div class="a-row a-size-base a-color-base">
+                     <a class="a-size-base a-link-normal s-underline-text s-underline-link-text s-link-style a-text-normal" href="/Alternative-Product-4-Link/dp/B0ALTCONT1/">
+                         <span class="a-price" data-a-size="xl" data-a-color="base">
+                             <span class="a-offscreen">₹799.00</span>
+                             <span aria-hidden="true">
+                                 <span class="a-price-symbol">₹</span>
+                                 <span class="a-price-whole">799</span>
+                             </span>
+                         </span>
+                     </a>
+                 </div>
+             </div>
+             <div class="a-section aok-relative s-image-square-aspect">
+                 <img class="s-image" src="https://m.media-amazon.com/images/I/image4_alt.jpg" />
+             </div>
+         </div>
+     </div>
+  </div>
+</body>
+</html>
