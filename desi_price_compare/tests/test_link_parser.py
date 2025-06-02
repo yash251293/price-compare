@@ -146,7 +146,11 @@ def test_title_with_leading_trailing_spaces(mock_get):
 
 @patch('requests.get')
 def test_extract_title_from_shortened_amazon_url(mock_get):
-    short_url = "https://amzn.in/d/1acVKXm"
+    # This test simulates a shortened amzn.in URL which redirects to a full product page.
+    # It specifically tests the scenario where the final page has no usable og:title,
+    # and the correct, detailed product title is extracted from the HTML <title> tag.
+    # This matches the behavior observed for the Philips Trimmer link (e.g., https://amzn.in/d/4UrxwQU).
+    short_url = "https://amzn.in/d/1acVKXm" # Using the original test shortlink, outcome is same type
     final_url = "https://www.amazon.in/dp/B09V7GM5M8"
     expected_title = "Philips India's No.1 Men's Trimmer | Self Sharpening Blades | Single Stroke Grooming I 9 in1 Face, Nose and Body I 2+1* year warranty | Powerful motor | No Oil Needed I 60 min runtime I MG3710/65 : Amazon.in: Health & Personal Care"
 
