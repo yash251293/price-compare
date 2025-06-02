@@ -1,18 +1,48 @@
 import time
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import quote # More standard than requests.utils.quote
+import logging
+import traceback # Ensure traceback is imported
+from urllib.parse import quote # For URL encoding
 
-# TODO: Import amazon_paapi and other necessary modules when implementing actual API calls
-# from paapi5_python_sdk.api.default_api import DefaultApi
-# ... (other PAAPI imports)
+# Configure basic logging for the script.
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(module)s - %(funcName)s - %(message)s')
 
-# Rate limiting: simple delay between requests to be less aggressive.
-# (60 seconds / 10 requests per minute = 6 seconds per request)
+# List of User-Agents to try (can be expanded)
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:108.0) Gecko/20100101 Firefox/108.0'
+]
+
 REQUEST_INTERVAL = 6
+TARGET_DEBUG_URL_PREFIX = "https://www.amazon.in/dp/B09V7GM5M8" # For link_parser debugging, not directly used in scraper
 
-# Placeholder for a more sophisticated rate limiter if needed later
-# For now, simple sleep in the scraping function.
+def _simplify_search_query(title: str, max_words: int = 6) -> str:
+    if not title:
+        return ""
+
+    # Remove common trailing parts like ": Amazon.in: Health & Personal Care"
+    # Split by known major delimiters first
+    simplified_title = title.split('|')[0].strip()
+    simplified_title = simplified_title.split(':')[0].strip() # Take part before first colon
+
+    # Further remove "Amazon.in" if it's part of the core string now
+    simplified_title = simplified_title.replace("Amazon.in", "").strip()
+
+    words = simplified_title.split()
+
+    if len(words) > max_words:
+        query_words = words[:max_words]
+    elif len(words) > 2 and len(words) <= max_words: # if it's 3-max_words words, use as is
+        query_words = words
+    elif words: # if 1-2 words, use as is
+        query_words = words
+    else: # Should not happen if title was not empty
+        return ""
+
+    return " ".join(query_words).strip()
+
 
 def _scrape_amazon_search_results_page(product_title: str) -> list[dict]:
     """
@@ -21,87 +51,117 @@ def _scrape_amazon_search_results_page(product_title: str) -> list[dict]:
     User-confirmed permission for dev/test scraping in this specific context.
     Rate limit: Attempts to respect ~10 requests per minute via REQUEST_INTERVAL.
     """
-    print(f"Waiting for {REQUEST_INTERVAL} seconds due to rate limiting...")
-    time.sleep(REQUEST_INTERVAL) # Simple delay before each request
+    logging.info(f"Waiting for {REQUEST_INTERVAL} seconds due to rate limiting...")
+    time.sleep(REQUEST_INTERVAL)
 
-    search_url = f"https://www.amazon.in/s?k={quote(product_title)}"
+    original_title_for_search = product_title
+    simplified_search_query = _simplify_search_query(original_title_for_search)
+
+    if not simplified_search_query:
+        logging.warning("Simplified search query is empty for original title: '{original_title_for_search}'. Aborting search.")
+        return []
+
+    logging.info(f"Original title for Amazon search: '{original_title_for_search}'")
+    logging.info(f"Simplified search query for Amazon: '{simplified_search_query}'")
+
+    search_url = f"https://www.amazon.in/s?k={quote(simplified_search_query)}"
+    logging.info(f"Scraping Amazon.in using URL: {search_url}")
+
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Accept-Encoding': 'gzip, deflate, br',
+        'User-Agent': USER_AGENTS[0],
+        'Accept-Language': 'en-US,en;q=0.9,hi;q=0.8',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+        'Referer': 'https://www.amazon.in/',
+        'DNT': '1',
         'Connection': 'keep-alive',
-        'DNT': '1', # Do Not Track
-        # 'Referer': 'https://www.amazon.in/' # Sometimes helpful
     }
 
     products_found = []
+    response = None
     try:
-        print(f"Scraping Amazon.in for: '{product_title}' using URL: {search_url}")
-        response = requests.get(search_url, headers=headers, timeout=15) # Increased timeout
-        response.raise_for_status() # Raise HTTPError for bad responses (4XX or 5XX)
+        response = requests.get(search_url, headers=headers, timeout=15)
 
-        # It's good to check if CAPTCHA is present
-        if "captcha" in response.text.lower() or "api-services-support@amazon.com" in response.text:
-            print("CAPTCHA or block page detected. Cannot scrape.")
+        final_url_after_search_redirect = response.url # Get final URL, if search itself redirects
+        logging.info(f"Search request to {search_url} resulted in final URL: {final_url_after_search_redirect}")
+        response.raise_for_status() # Raise HTTPError for bad responses (4XX or 5XX)
+        logging.info(f"Search request successful. Status code: {response.status_code} for {final_url_after_search_redirect}")
+
+        html_content = response.content # Store content after successful status check
+
+        # Save the content of the search results page for debugging
+        try:
+            search_page_filename = "temp_amazon_search_results.html"
+            with open(search_page_filename, "wb") as f: # write bytes
+                f.write(html_content)
+            logging.info(f"Saved search results HTML to '{search_page_filename}' for query: '{simplified_search_query}'")
+        except Exception as e_file:
+            logging.error(f"Error saving '{search_page_filename}': {e_file}")
+
+        # Check for CAPTCHA or block page more robustly after saving content
+        decoded_content_for_check = html_content.decode('utf-8', errors='ignore').lower()
+        if "captcha" in decoded_content_for_check or "api-services-support@amazon.com" in decoded_content_for_check:
+            logging.warning(f"CAPTCHA or block page detected on search results page for query '{simplified_search_query}'. Cannot scrape.")
+            # HTML is already saved, so it can be inspected.
             return []
 
-        soup = BeautifulSoup(response.content, 'html.parser') # Using built-in html.parser
+        soup = BeautifulSoup(html_content, 'html.parser')
 
-        # Primary selector for search result items
         search_results_items = soup.find_all('div', {'data-component-type': 's-search-result'})
-
-        # Fallback selector if primary fails (less specific, might grab other things)
         if not search_results_items:
-            print("Primary selector 'div[data-component-type=\"s-search-result\"]' failed. Trying fallback...")
+            logging.info("Primary selector 'div[data-component-type=\"s-search-result\"]' failed. Trying fallback...")
             search_results_items = soup.find_all('div', {'data-asin': True, 'class': lambda x: x and 's-result-item' in x.split()})
 
         if not search_results_items:
-            print("No search result items found using known selectors. Page structure might have changed.")
-            # print(f"Page content for debugging (first 500 chars): {response.text[:500]}") # Uncomment for debugging
+            logging.info(f"No search result items found using known selectors for query: '{simplified_search_query}'. Page structure might have changed.")
+            # Consider saving this HTML for debugging search page structure if needed
+            # with open(f"temp_search_page_{simplified_search_query[:20]}.html", "wb") as f:
+            #     f.write(response.content)
+            # logging.info(f"Saved search page HTML for query '{simplified_search_query}' for debugging.")
             return []
 
         for item_count, item in enumerate(search_results_items):
             title, price, image_url, product_url = None, None, None, None
 
-            # Title
             title_element = item.select_one('h2 a.a-link-normal span.a-text-normal')
             if title_element:
                 title = title_element.get_text(strip=True)
 
-            # Price
-            # Common price pattern: <span class="a-price" data-a-size="xl" data-a-color="base"><span class="a-offscreen">₹<!-- -->1,23,456.00</span>...</span>
             price_element = item.select_one('span.a-price > span.a-offscreen')
-            if not price_element: # Try another common price structure if first fails
-                price_element = item.select_one('span.a-price-whole') # e.g. <span class="a-price-whole">1,23,456</span>
+            if not price_element:
+                price_element = item.select_one('span.a-price-whole')
 
             if price_element:
-                price = price_element.get_text(strip=True)
-                # If only whole is found (no symbol), try to get symbol
-                if item.select_one('span.a-price-whole') and not any(c in price for c in ['₹', '$', '€', '£']):
-                     price_symbol_element = item.select_one('span.a-price-symbol')
-                     if price_symbol_element:
-                         price = price_symbol_element.get_text(strip=True) + price
+                price_str = price_element.get_text(strip=True)
+                price_symbol_element = item.select_one('span.a-price-symbol')
+                currency_symbol = ""
+                if price_symbol_element:
+                    currency_symbol = price_symbol_element.get_text(strip=True)
+
+                # If price_str is just the symbol, get the whole part
+                if price_str == currency_symbol and item.select_one('span.a-price-whole'):
+                    price = currency_symbol + item.select_one('span.a-price-whole').get_text(strip=True)
+                elif currency_symbol and currency_symbol not in price_str: # Prepend if symbol is missing
+                    price = currency_symbol + price_str
+                else:
+                    price = price_str
 
 
-            # Image URL
             image_element = item.select_one('img.s-image')
             if image_element:
                 image_url = image_element.get('src')
 
-            # Product URL
-            # Common link: <a class="a-link-normal s-underline-text s-underline-link-text s-link-style a-text-normal"
-            url_element = item.select_one('h2 a.a-link-normal') # More general for the link within h2
-            if url_element:
+            url_element = item.select_one('h2 a.a-link-normal.s-underline-text')
+            if not url_element: # Try another common link pattern for product title
+                url_element = item.select_one('h2 a.a-link-normal, a.a-link-normal.s-no-outline') # Broader selector for h2 links
+            if url_element: # Check if an element was found
                 raw_url = url_element.get('href')
                 if raw_url:
                     if not raw_url.startswith('https://www.amazon.in') and raw_url.startswith('/'):
                         product_url = f"https://www.amazon.in{raw_url}"
                     elif raw_url.startswith('https://www.amazon.in'):
                         product_url = raw_url
-                    # else: print(f"Skipping relative URL not starting with '/': {raw_url}") # For debugging weird URLs
 
-            if title and price and image_url and product_url:
+            if title and price and image_url and product_url: # Ensure all parts are found
                 products_found.append({
                     "title": title,
                     "price": price,
@@ -109,35 +169,44 @@ def _scrape_amazon_search_results_page(product_title: str) -> list[dict]:
                     "product_url": product_url
                 })
 
-            # print(f"Item {item_count}: Title: {title}, Price: {price}, Image: {bool(image_url)}, URL: {bool(product_url)}") # Debug each item
-            if len(products_found) >= 5: # Limit results to 5
-                print("Reached limit of 5 products.")
+            if len(products_found) >= 5:
+                logging.info("Reached limit of 5 products for query.")
                 break
 
         if not products_found:
-            print("No products extracted, though search result items might have been found. Check selectors for title, price, image, URL.")
+            logging.info(f"No products extracted matching all criteria for query: '{simplified_search_query}'. Selectors might need an update or page content differs.")
+        else:
+            logging.info(f"Found {len(products_found)} products from scraping for query: '{simplified_search_query}'.")
 
     except requests.exceptions.HTTPError as http_err:
-        # http_err.response is guaranteed to be available for HTTPError
-        status_code = http_err.response.status_code
-        print(f"HTTP error occurred: {http_err} - Status: {status_code}")
-        # print(f"Response content for HTTP error: {http_err.response.text[:500]}") # Uncomment for debugging
+        status_code = http_err.response.status_code if hasattr(http_err, 'response') and http_err.response else 'Unknown Status'
+        response_text_snippet = http_err.response.text[:500].lower() if hasattr(http_err, 'response') and http_err.response and hasattr(http_err.response, 'text') else '' # Increased snippet size
+        logging.error(f"HTTP error occurred for query '{simplified_search_query}': {http_err} - Status: {status_code}")
         if status_code == 404:
-            print("Page not found. Check search URL or product title.")
-        # Check response text for captcha, ensuring http_err.response.text exists
-        elif status_code == 503 or \
-             (hasattr(http_err.response, 'text') and http_err.response.text and 'captcha' in http_err.response.text.lower()):
-            print("Amazon might be temporarily blocking requests or requires a CAPTCHA.")
+            logging.error("Page not found for search query. Check search URL generation.")
+        elif status_code == 503 or 'captcha' in response_text_snippet or 'api-services-support@amazon.com' in response_text_snippet:
+            logging.error("Amazon might be temporarily blocking requests or requires a CAPTCHA for query.")
+            # Save error page HTML if response object is available
+            if hasattr(http_err, 'response') and http_err.response and hasattr(http_err.response, 'content'):
+                 try:
+                    # Sanitize filename from query
+                    safe_query_filename_part = "".join([c if c.isalnum() else "_" for c in simplified_search_query])[:50]
+                    error_page_filename = f"temp_amazon_error_page_{status_code}_{safe_query_filename_part}.html"
+                    with open(error_page_filename, "wb") as f:
+                        f.write(http_err.response.content)
+                    logging.info(f"Saved error page HTML to '{error_page_filename}'")
+                 except Exception as e_file_err:
+                    logging.error(f"Error saving error page HTML: {e_file_err}")
     except requests.exceptions.Timeout:
-        print("Request to Amazon timed out. The server did not respond in time.")
+        logging.error(f"Timeout occurred while fetching Amazon search page for query: '{simplified_search_query}'.")
     except requests.exceptions.ConnectionError as conn_err:
-        print(f"Connection error for Amazon page: {conn_err}. Check network or DNS.")
-    except requests.exceptions.RequestException as e: # Catch other request-related errors
-        print(f"Error fetching Amazon page: {e}")
+        logging.error(f"Connection error occurred while fetching Amazon page for query '{simplified_search_query}': {conn_err}")
+    except requests.exceptions.RequestException as e:
+        logging.error(f"Generic error fetching Amazon page for query '{simplified_search_query}': {e}")
     except Exception as e:
-        import traceback # Import here to keep it local to this exceptional case
-        print(f"An unexpected error occurred during scraping: {e}")
-        traceback.print_exc() # Print full traceback for dev debugging
+        # logging.error(f"An unexpected error occurred during scraping for query '{simplified_search_query}': {e}")
+        # logging.error(traceback.format_exc()) # Already imported at top level
+        logging.error(f"An unexpected error occurred during scraping for query '{simplified_search_query}': {e}\n{traceback.format_exc()}")
 
     return products_found
 
@@ -148,72 +217,42 @@ def search_amazon_products(product_title: str) -> list[dict]:
     NOT FOR PRODUCTION. Production should use PAAPI or a similar official API.
     Rate limiting is handled by the scraping function.
     """
-    print(f"Starting Amazon product search for: '{product_title}' (using DEV scraper).")
+    logging.info(f"search_amazon_products called with title: '{product_title}' (scraper will simplify).")
     if not product_title or not product_title.strip():
-        print("Product title is empty. Skipping Amazon search.")
+        logging.warning("Product title is empty. Skipping Amazon search.")
         return []
 
     scraped_products = _scrape_amazon_search_results_page(product_title)
 
     if not scraped_products:
-        print(f"Scraping returned no results for '{product_title}'.")
+        logging.info(f"Scraping returned no results for original title: '{product_title}'.")
         # Fallback to dummy data can be re-enabled here if needed for development flow.
-        # For this subtask, if scraping fails, it returns empty.
         # e.g., return _get_dummy_products(product_title)
-        pass # Explicitly doing nothing more if no products found
+        pass
 
     return scraped_products
 
-# def _get_dummy_products(product_title: str): # Example of dummy data function if needed
-#     print(f"Returning DUMMY products for '{product_title}' as scraping failed or yielded no results.")
-#     return [
-#         {
-#             "title": f"Dummy Amazon Product 1 for '{product_title}'",
-#             "price": "₹1,999.00",
-#             "image_url": "https://via.placeholder.com/150?text=Amazon+Dummy+1",
-#             "product_url": "#product1_dummy_amazon_link"
-#         },
-#         {
-#             "title": f"Dummy Amazon Product 2 for '{product_title}'",
-#             "price": "₹2,499.00",
-#             "image_url": "https://via.placeholder.com/150?text=Amazon+Dummy+2",
-#             "product_url": "#product2_dummy_amazon_link"
-#         }
-#     ]
-
 if __name__ == '__main__':
-    # This block is for direct testing of this script.
-    # Note: Running this directly will make actual network requests to Amazon.in.
-    print("Starting direct test of amazon_api.py scraper...")
+    # This section is for direct testing of this script.
+    # Examples of how to use it:
 
-    # Test case 1: A common product
-    # test_search_term = "iphone 15 pro max"
-    # print(f"\n[Test Case 1: Searching for '{test_search_term}']")
-    # products = search_amazon_products(test_search_term)
+    # logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(module)s - %(funcName)s - %(message)s', force=True)
+    # logging.info("Starting a direct test of search_amazon_products with query simplification...")
+
+    # test_title_long = "Philips India's No.1 Men's Trimmer | Self Sharpening Blades | Single Stroke Grooming I 9 in1 Face, Nose and Body I 2+1* year warranty | Powerful motor | No Oil Needed I 60 min runtime I MG3710/65 : Amazon.in: Health & Personal Care"
+    # logging.info(f"Testing with long title: '{test_title_long}'")
+    # products = search_amazon_products(test_title_long)
     # if products:
-    #     print(f"Found {len(products)} products:")
-    #     for p in products:
-    #         print(f"  - Title: {p['title'][:50]}... | Price: {p['price']} | Image: {bool(p['image_url'])} | URL: {p['product_url'][:50]}...")
+    #      logging.info(f"Test with long title SUCCEEDED. Found {len(products)} products.")
+    #      # for p in products: logging.info(p)
     # else:
-    #     print("No products found.")
+    #      logging.error(f"Test with long title FAILED to find products.")
 
-    # Test case 2: Empty search term
-    # print("\n[Test Case 2: Empty search term]")
-    # products_empty = search_amazon_products("")
-    # if not products_empty:
-    #     print("Correctly returned empty list for empty search term.")
+    # test_title_short = "iPhone 15 Pro Max"
+    # logging.info(f"Testing with short title: '{test_title_short}'")
+    # products_short = search_amazon_products(test_title_short)
+    # if products_short:
+    #      logging.info(f"Test with short title SUCCEEDED. Found {len(products_short)} products.")
     # else:
-    #     print(f"Error: Expected empty list, got {len(products_empty)} products.")
-
-    # Test case 3: Potentially problematic search term (e.g., very long, special chars)
-    # test_search_term_problematic = "a" # "a" * 500 # very long
-    # print(f"\n[Test Case 3: Problematic search term '{test_search_term_problematic}']")
-    # products_problematic = search_amazon_products(test_search_term_problematic)
-    # if products_problematic:
-    #      print(f"Found {len(products_problematic)} products.")
-    # else:
-    #      print("No products found (or error occurred).")
-
-    print("\nDirect test finished. Note: Actual scraping depends on Amazon's current page structure and anti-scraping measures.")
-    # To see detailed scraping attempts, uncomment print statements within _scrape_amazon_search_results_page
-    pass # Keep main guard clean for subtask submission as per original instructions.
+    #      logging.error(f"Test with short title FAILED.")
+    pass
