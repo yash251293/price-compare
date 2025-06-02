@@ -1,0 +1,6 @@
+Flask
+requests
+beautifulsoup4
+python-amazon-paapi
+pytest
+pytest-flask

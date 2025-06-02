@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Desi Price Compare</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <h1>Welcome to Desi Price Compare!</h1>
+    <div id="content">
+        <form id="product-link-form">
+            <input type="text" name="product_link" placeholder="Paste product link here">
+            <button type="submit">Compare Prices</button>
+        </form>
+        <div id="search-results-container" aria-live="polite">
+            <p>Search results will appear here.</p>
+        </div>
+        <!-- Content will be loaded here -->
+    </div>
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
